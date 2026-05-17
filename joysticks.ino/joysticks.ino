@@ -50,6 +50,6 @@ void loop() {
   Serial.println(SWValThrot);
 
   Serial.print("\n");
-    
   delay(100);
+
 }
