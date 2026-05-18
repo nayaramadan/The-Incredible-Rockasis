@@ -1,0 +1,118 @@
+# soda_detector.py
+
+import cv2
+import time
+from inference_sdk import InferenceHTTPClient
+
+
+class SodaDetector:
+    def __init__(
+        self,
+        stream_url,
+        api_key,
+        workspace="label-y3rcq",
+        workflow="find-soda-can",
+        process_every=10,
+    ):
+        self.stream_url = stream_url
+        self.process_every = process_every
+        self.frame_count = 0
+
+        self.client = InferenceHTTPClient(
+            api_url="https://serverless.roboflow.com",
+            api_key=api_key
+        )
+
+        self.workspace = workspace
+        self.workflow = workflow
+
+        self.cap = cv2.VideoCapture(stream_url)
+
+        if not self.cap.isOpened():
+            raise RuntimeError("Failed to open MJPEG stream")
+
+    def get_detection(self):
+        """
+        Returns:
+            None if no detection
+
+            OR
+
+            {
+                "x": object_x,
+                "y": object_y,
+                "dx": offset_x_pixels,
+                "dy": offset_y_pixels,
+                "ndx": normalized_x,
+                "ndy": normalized_y,
+                "confidence": conf,
+                "time": inference_time
+            }
+        """
+
+        while True:
+            ret, frame = self.cap.read()
+
+            if not ret:
+                return None
+
+            self.frame_count += 1
+
+            # only process every Nth frame
+            if self.frame_count % self.process_every != 0:
+                continue
+
+            h, w = frame.shape[:2]
+
+            cx_img = w / 2
+            cy_img = h / 2
+
+            tmp_path = "frame.jpg"
+            cv2.imwrite(tmp_path, frame)
+
+            start = time.time()
+
+            result = self.client.run_workflow(
+                workspace_name=self.workspace,
+                workflow_id=self.workflow,
+                images={
+                    "image": tmp_path
+                },
+                use_cache=True
+            )
+
+            inference_time = time.time() - start
+
+            try:
+                preds = result[0]["predictions"]["predictions"]
+            except:
+                preds = []
+
+            if not preds:
+                return None
+
+            best = max(preds, key=lambda p: p.get("confidence", 0))
+
+            ox = best["x"]
+            oy = best["y"]
+            conf = best.get("confidence", 0)
+
+            dx = ox - cx_img
+            dy = oy - cy_img
+
+            ndx = dx / cx_img
+            ndy = dy / cy_img
+
+            return {
+                "x": ox,
+                "y": oy,
+                "dx": dx,
+                "dy": dy,
+                "ndx": ndx,
+                "ndy": ndy,
+                "confidence": conf,
+                "time": inference_time,
+            }
+
+    def close(self):
+        self.cap.release()
